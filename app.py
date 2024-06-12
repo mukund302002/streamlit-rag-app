@@ -11,17 +11,19 @@ from transformers import pipeline
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 import requests
 import re
+import httpx
 import logging
+import os
 
 # huggingface token
-api_token = "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"
+load_dotenv()
+DATABASE_URL = os.getenv('DATABASE_URL')
 
-DATABASE_URL = 'postgresql+psycopg2://postgres.hjjjkgzdxwstwuqjspje:eDCsslfp0QmY0Ijk@aws-0-ap-south-1.pooler.supabase.com:6543/postgres'
+SUPABASE_URL = os.getenv('SUPABASE_URL')
+SUPABASE_KEY = os.getenv('SUPABASE_KEY')
+api_token = os.getenv('API_TOKEN')
+
 engine = create_engine(DATABASE_URL)
-
-# Ensure to set your environment variables or replace these values accordingly
-SUPABASE_URL = "https://hjjjkgzdxwstwuqjspje.supabase.co"
-SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhqamprZ3pkeHdzdHd1cWpzcGplIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MTc1NzA3OTcsImV4cCI6MjAzMzE0Njc5N30.sWTlOvOS7PcTBmwgdLOB6hxli4ohUM7IZfMNTlL1gyE"
 
 supabase_client: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
