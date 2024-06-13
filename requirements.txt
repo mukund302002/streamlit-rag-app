@@ -19,6 +19,11 @@ sqlalchemy
 psycopg2-binary
 PyPDF2
 requests
+google-auth 
+google-auth-oauthlib 
+google-auth-httplib2 
+google-api-python-client 
+requests
 # uncomment to use huggingface llms
 # huggingface-hub==0.14.1
 
