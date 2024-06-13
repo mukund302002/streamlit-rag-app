@@ -1,4 +1,5 @@
 
+
 import streamlit as st
 from dotenv import load_dotenv
 from supabase import create_client, Client
@@ -13,20 +14,24 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 import requests
 import re
 import httpx
-import requests
+import logging
+import os
 from google.auth import default
 from google.auth.transport.requests import Request
 import google.generativeai as genai
 # HuggingFace token
 api_token = "AIzaSyBjTX8MSFMU3XvkiKhZAJ2BHgnt3S3_MWI"
 
-DATABASE_URL = "postgresql+psycopg2://postgres.oifpqngnyxthcptbfgqr:F8qpcxfBeXHiypGM@aws-0-ap-south-1.pooler.supabase.com:6543/postgres"
+# huggingface token
+load_dotenv()
+DATABASE_URL = os.getenv('DATABASE_URL')
+
+SUPABASE_URL = os.getenv('SUPABASE_URL')
+SUPABASE_KEY = os.getenv('SUPABASE_KEY')
+api_token = os.getenv('API_TOKEN')
+
 engine = create_engine(DATABASE_URL)
-SUPABASE_URL = "https://oifpqngnyxthcptbfgqr.supabase.co"
-SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9pZnBxbmdueXh0aGNwdGJmZ3FyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MTc2NjE5MTAsImV4cCI6MjAzMzIzNzkxMH0.-JYoel_gkWOswP6UKn3AcJ1Lbu4mld8UbDrYadXbc0o"
-
 supabase_client: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-
 def test_connection():
     try:
         response = httpx.get(SUPABASE_URL)
@@ -40,6 +45,7 @@ def get_pdf_text(pdf_docs):
             pdf_reader = PdfReader(pdf)
             for page in pdf_reader.pages:
                 text += page.extract_text()
+        text = clean_text(text)  # Clean the extracted text
     except Exception as e:
         st.error(f"Error reading PDF: {e}")
         text = None  # Set text to None in case of error
@@ -63,12 +69,17 @@ def get_embeddings(text_chunks):
 def find_top_chunks(user_query, content, content_embeddings, top_n=3):
     model = SentenceTransformer('all-MiniLM-L6-v2')
     query_embedding = model.encode([user_query], convert_to_tensor=True)
+    # If content_embeddings is empty, encode the entire content
+    if len(content_embeddings) == 0:
+        content_embeddings = model.encode(content, convert_to_tensor=True)
+
     similarities = np.dot(content_embeddings, query_embedding.T).squeeze()
     top_indices = np.argsort(similarities)[-top_n:][::-1]
     top_chunks = [content[idx] for idx in top_indices]
     return top_chunks
 
 def clean_text(text):
+    text = text.replace('\n', ' ')
     text = re.sub(r'\s+', ' ', text)
     text = re.sub(r'[^\w\s.,@-]', '', text)
     return text.strip()
@@ -89,8 +100,8 @@ def handle_userinput(user_question):
         return
 
     data = response.data[0]
-    content = data.get('content')  # Safely access 'content' key
-    st.write({content})
+    content = data.get('content', []) 
+    # st.write("this is final content",content) # Safely access 'content' key
     content_embeddings = np.array(data.get('embeddings', []))  # Safely access 'embeddings' key
 
     if isinstance(content, str):
@@ -99,39 +110,34 @@ def handle_userinput(user_question):
         except Exception as e:
             st.error(f"Content is not in the expected format: {e}")
             return
+        
+    # Ensure content is a list of strings
+    if not isinstance(content, list):
+        content = [content]
 
     best_chunk = find_top_chunks(user_question, content, content_embeddings)
     best_chunk = extract_chunks(best_chunk)
 
-
+    # Join the best chunks into a single string for the input
+    # context = " ".join(best_chunk)
     input_text = f"You are an AI language model designed for a Retrieval-Augmented Generation (RAG) application. You will receive a query along with relevant chunks of text. Based on these chunks, generate a coherent and accurate response to the query. Query: {user_question} Relevant Chunks: {best_chunk}"
     genai.configure(api_key="AIzaSyBjTX8MSFMU3XvkiKhZAJ2BHgnt3S3_MWI")
     model = genai.GenerativeModel('gemini-1.0-pro')
+
+    # input_text = f"You are an AI language model and will answer the query based on the best chunk provided. Query: {user_question} Best chunk: {best_chunk}"
 
     # headers = {
     #     "Authorization": f"Bearer {api_token}",
     #     "Content-Type": "application/json"
     # }
-    # payload = {
-    #     "model": "gemini-1.0-pro",  # Adjust the model parameter based on the Gemini API requirements
-    #     "inputs": input_text,
-    #     "parameters": {
-    #         "max_length": 1024,
-    #         "temperature": 0.7,
-    #         "repetition_penalty": 1.2
-    #     }
-    # }
+    # payload = {"inputs": input_text, "parameters": {"max_length": 512, "temperature": 0.7, "repetition_penalty": 1.2}}
     output = model.generate_content(input_text)
-
     # response = requests.post(
-    #     "https://api.gemini-models.com/inference",  # Replace with the correct Gemini API endpoint
+    #     "https://api-inference.huggingface.co/models/google/flan-t5-large",
     #     headers=headers,
     #     json=payload
     # )
-
     response = output.text
-   
-
     # if response.status_code == 200:
     #     response_data = response.json()
     #     if isinstance(response_data, list) and 'generated_text' in response_data[0]:
@@ -145,7 +151,7 @@ def handle_userinput(user_question):
 
     st.session_state.chat_history = [
         {"role": "user", "content": user_question},
-        {"role": "bot", "content": response}
+        {"role": "bot", "content": response }
     ]
 
     for message in st.session_state.chat_history:
@@ -155,12 +161,17 @@ def handle_userinput(user_question):
             st.write(bot_template.replace("{{MSG}}", message['content']), unsafe_allow_html=True)
 
 def fetch_user_data(id_value):
-    response = supabase_client.table('pdfs').select('id').eq('id', id_value).execute()
+    response = supabase_client.table('pdfs').select('id').eq('id', id_value).limit(1).execute()
     if response.data:
         return True
     else:
         st.error(f"No data found for ID, try again!: {id_value}")
         return False
+    
+def is_id_unique(new_id_value):
+    response = supabase_client.table('pdfs').select('id').eq('id', new_id_value).execute()
+    return len(response.data) == 0  # Return True if the ID is unique, False otherwise
+
 
 def main():
     load_dotenv()
@@ -174,6 +185,10 @@ def main():
 
     if "id" not in st.session_state:
         st.session_state.id = None
+    if "user_pdf_docs" not in st.session_state:
+        st.session_state.user_pdf_docs = None
+    if "existing_content" not in st.session_state:
+        st.session_state.existing_content = []
     if "pdf_processed" not in st.session_state:
         st.session_state.pdf_processed = False
 
@@ -188,99 +203,131 @@ def main():
             new_user_pdf_docs = st.file_uploader("Upload your PDFs here and click on 'Process'", accept_multiple_files=True, key=key_new_user)
             if st.button("Process New User Data"):
                 if new_id_value and new_user_pdf_docs:
-                    with st.spinner("Processing"):
-                        try:
-                            raw_text = get_pdf_text(new_user_pdf_docs)
-                            text_chunks = get_text_chunks(raw_text)
-                            embeddings = get_embeddings(text_chunks)
-                            embedding_list = embeddings.tolist()
-                            st.session_state.id = new_id_value
-                            data = {'id': new_id_value, 'content': text_chunks, 'embeddings': embedding_list}
-                            supabase_client.table('pdfs').insert(data).execute()
-                            st.session_state.pdf_processed = True
-                        except Exception as e:
-                            st.error(f"Error occurred in processing new ID and new PDFs: {e}")
-                    st.success("Processing complete!")
-                    st.write("You can now ask a question to the chatbot.")
+                    if is_id_unique(new_id_value):
+                        with st.spinner("Processing"):
+                            try:
+                                raw_text = get_pdf_text(new_user_pdf_docs)
+                                text_chunks = get_text_chunks(raw_text)
+                                embeddings = get_embeddings(text_chunks)
+                                embedding_list = embeddings.tolist()
+                                st.session_state.id = new_id_value
+                                data = {'id': new_id_value, 'content': text_chunks, 'embeddings': embedding_list}
+                                supabase_client.table('pdfs').insert(data).execute()
+                                st.session_state.pdf_processed = True
+                            except Exception as e:
+                                st.error(f"Error occurred in processing new ID and new PDFs: {e}")
+                        st.success("Processing complete!")
+                        st.write("You can now ask a question to the chatbot.")
+                    else:
+                        st.error("This User ID already exists. Please provide a unique ID.")
+                else:
+                    st.error("Please provide both ID and PDFs to proceed.")
+                
         
+
         elif user_type == "Old User":
             old_id_value = st.text_input("Enter your old ID", value="")
-            old_user_pdf_docs = st.file_uploader("Upload your PDFs and click on 'Process'", accept_multiple_files=True, key=key_old_user)
-            if st.button("process data"):
-                
-                st.session_state.id = old_id_value
-                    
-                    
-                    
-                # Fetch existing data associated with old_id_value
-                response = supabase_client.table('pdfs').select('content', 'embeddings').eq('id', old_id_value).execute()
-                existing_data = response.data[0]
-                # st.write({existing_data})
-                existing_content = existing_data['content'] if 'content' in existing_data else []
-                # st.write({existing_data})
-                existing_embeddings = np.array(existing_data['embeddings']) if 'embeddings' in existing_data else np.array([])
-                st.write("fetching complete")
+            old_user_pdf_docs = st.file_uploader("Upload your PDFs and click on 'Process'", accept_multiple_files=True, key='key_old_user')
 
-                  
-                if old_user_pdf_docs:
+            if old_user_pdf_docs:
+                st.session_state.user_pdf_docs = old_user_pdf_docs
+            
+            if st.button("Process Data"):
+                st.session_state.id = old_id_value
+
+                # Fetch existing data associated with old_id_value
+                response = supabase_client.table('pdfs').select('content', 'embeddings').eq('id', st.session_state.id).execute()
+                existing_data = response.data[0]
+                
+                # Ensure existing_content is a list
+                existing_content = existing_data.get('content', [])
+                if isinstance(existing_content, str):
+                    existing_content = eval(existing_content)
+                if not isinstance(existing_content, list):
+                    existing_content = [existing_content]
+
+                st.session_state.existing_content = existing_content
+                existing_embeddings = np.array(existing_data['embeddings']) if 'embeddings' in existing_data else np.array([])
+
+                st.write("Fetching complete")
+
+                if st.session_state.user_pdf_docs:
                     with st.spinner("Processing"):
                         try:
-                            st.write("started processing")
-                            new_raw_text = get_pdf_text(old_user_pdf_docs)
+                            st.write("Started processing")
+                            new_raw_text = get_pdf_text(st.session_state.user_pdf_docs)
                             new_text_chunks = get_text_chunks(new_raw_text)
+                            # new_text_chunks should be a list of strings (or text chunks)
+                            # Ensure new_text_chunks is always a list of strings
+                            if isinstance(new_text_chunks, str):
+                                new_text_chunks = [new_text_chunks]
+
+                            existing_content.extend(new_text_chunks)
+                            
+                            # combined_text_chunks = st.session_state.existing_content + new_text_chunks
+                            # combined_text_chunks is now a combined list of strings (or text chunks)
+
                             new_embeddings = get_embeddings(new_text_chunks)
-                            combined_text_chunks = existing_content[0] + new_text_chunks[0]
-                            st.write("done")
-                            st.write({combined_text_chunks})
                             combined_embeddings = np.concatenate([existing_embeddings, new_embeddings], axis=0)
                             combined_embedding_list = combined_embeddings.tolist()
-                            data = {'id': old_id_value, 'content': combined_text_chunks, 'embeddings': combined_embedding_list}
-                            supabase_client.table('pdfs').upsert(data).execute()
+
+                            data = {
+                                'id': st.session_state.id,
+                                'content': existing_content,
+                                'embeddings': combined_embedding_list
+                            }
+                            supabase_client.table('pdfs').delete().eq('id', st.session_state.id).execute()
+                            supabase_client.table('pdfs').insert(data).execute()
+
                             st.session_state.pdf_processed = True
                         except Exception as e:
                             st.error(f"An error occurred with processing old ID and new documents: {e}")
-                    st.success("Processing complete!")
-                    st.write("You can now ask a question to the chatbot.")
-                    
+
+                    st.success("You can now ask a question to the chatbot.")
+
                     
         elif user_type == "Continue with previous docs":
             old_id_value = st.text_input("Enter your old ID", value="")
-            if fetch_user_data(old_id_value):
 
-                st.session_state.id = old_id_value
-                st.write("Welcome Back")
+            st.session_state.id = old_id_value
 
-                if st.button("Process"):
-                    with st.spinner("Processing"):
-                        st.session_state.pdf_processed = True
-                        # try:
-                            # # Fetch existing data associated with old_id_value
-                            # response = supabase_client.table('pdfs').select('content', 'embeddings').eq('id', old_id_value).execute()
-                            # if response.data:
-                            #     existing_data = response.data[0]
-                            #     st.write({existing_data[0]})
-                            #     existing_content = existing_data.get('content', [])
-                            #     existing_embeddings = np.array(existing_data.get('embeddings', []))
+            if st.button("Process the old documents"):
+                with st.spinner("Processing"):
+                    try:
+                        # Fetch existing data associated with old_id_value
+                        # st.write("Started fetching existing data...")
+                        response = supabase_client.table('pdfs').select('content', 'embeddings').eq('id', old_id_value).execute()
+                        # st.write("Response fetched")
 
-                            #     st.write("Fetching complete")
-                                # st.session_state.pdf_processed = True
-                            # else:
-                            #     st.error(f"No data found for the provided ID: {old_id_value}")
+                        if response.data:
+                            existing_data = response.data[0]
+                            # st.write(f"Existing data: {existing_data}")
 
-                        # except Exception as e:
-                        #     st.error(f"An error occurred with processing old ID and new documents: {e}")
+                            existing_content = existing_data.get('content', [])
+                            # debugging
+                            # st.write("YE existing content hae")
+                            # st.write(existing_content)
+                            existing_embeddings = np.array(existing_data.get('embeddings', []))
 
-                    if st.session_state.pdf_processed:
-                        st.success("Processing complete!")
-                        st.write("You can now ask a question to the chatbot.")
+                            # st.write("Fetching complete")
+                            st.session_state.pdf_processed = True
+                        else:
+                            st.error(f"No data found for the provided ID: {old_id_value}")
 
+                    except Exception as e:
+                        st.error(f"An error occurred with processing old ID and new documents: {e}")
+
+                if st.session_state.pdf_processed:
+                    st.success("You can now ask a question to the chatbot.")
+                    
 
 
 
     if st.session_state.pdf_processed:
         user_question = st.text_input("Ask a question about your documents:")
-        if st.button("Answer"):
-            handle_userinput(user_question)
+        if st.button("get response"):
+            with st.balloons():
+                handle_userinput(user_question)
 
 if __name__ == '__main__':
     main()
