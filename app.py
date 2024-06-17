@@ -20,7 +20,7 @@ from google.auth import default
 from google.auth.transport.requests import Request
 import google.generativeai as genai
 # HuggingFace token
-api_token = "AIzaSyBjTX8MSFMU3XvkiKhZAJ2BHgnt3S3_MWI"
+api_token = ""
 
 # huggingface token
 load_dotenv()
